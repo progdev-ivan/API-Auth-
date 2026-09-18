@@ -2,6 +2,7 @@ import { PrismaClient } from "../../generated/prisma/client.js";
 import { prisma } from "../../lib/prisma.js";
 import bcrypt from "bcrypt";
 import { AppError } from "../../errors/app-error.js";
+import { TokenService } from "../tokens/token.service.js";
 
 interface LoginRequest {
   email: string;
@@ -9,7 +10,10 @@ interface LoginRequest {
 }
 
 export class LoginService {
-  constructor(private prismaClient: PrismaClient = prisma) { }
+  constructor(
+    private prismaClient: PrismaClient = prisma,
+    private tokenService: TokenService = new TokenService(),
+  ) { }
 
   async execute({ email, password }: LoginRequest) {
     const user = await this.prismaClient.user.findUnique({
@@ -31,11 +35,16 @@ export class LoginService {
       throw new AppError("E-mail ou senha inválidos", 401);
     }
 
+    const accessToken = this.tokenService.generateAccessToken(user.id);
+
     return {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      createdAt: user.createdAt,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        createdAt: user.createdAt,
+      },
+      accessToken,
     };
   }
 }

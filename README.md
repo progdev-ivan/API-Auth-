@@ -72,7 +72,7 @@ Frontend React
 - **Zod** — validação dos dados recebidos pela API
 - **bcrypt** — hashing seguro de senhas e segredos de refresh token
 - **jsonwebtoken (JWT)** — geração e assinatura de tokens de acesso stateless
-- **crypto** — geração de tokens e identificadores criptograficamente seguros
+- **crypto** — geração de identificadores e segredos criptograficamente seguros
 
 ### Desenvolvimento e infraestrutura
 
@@ -142,7 +142,7 @@ Responsável pela lógica e regras de negócio da aplicação:
 
 - **CreateUserService**: verifica duplicidade de e-mail, gera hash da senha e persiste o usuário;
 - **LoginService**: valida credenciais, emite o Access Token (JWT), gera o Refresh Token e registra a sessão no banco;
-- **RefreshTokenService**: valida o formato e assinatura do Refresh Token, valida a expiração, executa a rotação de segredo e emite novos tokens;
+- **RefreshTokenService**: valida o formato e o segredo do Refresh Token, verifica a expiração, executa a rotação do segredo e emite novos tokens;
 - **TokenService**: assina e configura os parâmetros do Access Token JWT;
 - **SessionService**: gerencia a criação e atualização de hashes de sessões no banco de dados.
 

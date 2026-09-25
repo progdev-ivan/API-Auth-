@@ -1,6 +1,6 @@
 # 🔐 API Auth
 
-API de autenticação desenvolvida com **Node.js, TypeScript, Express, Prisma e PostgreSQL**, seguindo princípios de organização em camadas, Programação Orientada a Objetos (POO) e boas práticas de desenvolvimento de APIs REST.
+API de autenticação desenvolvida com **Node.js, TypeScript, Express, Prisma e PostgreSQL**, seguindo princípios de organização em camadas, Programação Orientada a Objetos (POO) e boas práticas de desenvolvimento de APIs REST com autenticação via JWT e gerenciamento de sessões seguras com Refresh Token Rotation.
 
 > 🚧 **Projeto em desenvolvimento**
 >
@@ -33,16 +33,14 @@ Sistemas que possuem usuários normalmente precisam lidar com problemas como:
 - cadastro de usuários;
 - validação de dados;
 - armazenamento seguro de senhas;
-- autenticação;
-- gerenciamento de sessões;
-- controle de acesso;
-- expiração de sessões;
-- renovação de autenticação;
+- autenticação e emissão de tokens;
+- gerenciamento de sessões ativas;
+- controle de expiração e renovação de acesso;
 - tratamento padronizado de erros.
 
 O objetivo desta API é centralizar essas responsabilidades em um serviço de autenticação que possa ser consumido por diferentes aplicações Frontend ou outros serviços.
 
-Um cenário de uso poderia ser:
+Um cenário de uso:
 
 ```text
 Frontend React
@@ -51,10 +49,10 @@ Frontend React
       ▼
    API Auth
       │
-      ├── Usuários
-      ├── Autenticação
-      ├── Sessões
-      └── Tokens
+      ├── Usuários (Cadastro e validação)
+      ├── Autenticação (Login e verificação de credenciais)
+      ├── Sessões (Controle de dispositivos e expiração)
+      └── Tokens (Access Token JWT + Refresh Token Rotation)
              │
              ▼
         PostgreSQL
@@ -72,7 +70,9 @@ Frontend React
 - **Prisma ORM** — acesso e gerenciamento dos dados
 - **PostgreSQL** — banco de dados relacional
 - **Zod** — validação dos dados recebidos pela API
-- **bcrypt** — hashing seguro de senhas
+- **bcrypt** — hashing seguro de senhas e segredos de refresh token
+- **jsonwebtoken (JWT)** — geração e assinatura de tokens de acesso stateless
+- **crypto** — geração de tokens e identificadores criptograficamente seguros
 
 ### Desenvolvimento e infraestrutura
 
@@ -86,9 +86,9 @@ Frontend React
 
 ## 🧱 Arquitetura
 
-O projeto utiliza uma organização baseada em responsabilidades bem definidas.
+O projeto utiliza uma organização baseada em responsabilidades bem definidas (Controllers, Services, Schemas e Middlewares).
 
-Atualmente, o fluxo principal de cadastro segue:
+### Fluxo de Cadastro e Autenticação
 
 ```text
 Request
@@ -100,16 +100,17 @@ Request
 Controller
    │
    ▼
- Zod
+ Zod (Validação dos dados)
    │
    ▼
  Service
-   │
    ├── Regras de negócio
-   ├── bcrypt
+   ├── bcrypt (Hash e verificação de senha/token)
+   ├── TokenService (Geração de Access Token JWT)
+   └── RefreshTokenService (Geração de segredo seguro)
    │
    ▼
- Prisma
+Prisma ORM (User / Session)
    │
    ▼
 PostgreSQL
@@ -117,48 +118,37 @@ PostgreSQL
 
 ### Route
 
-Responsável por definir os endpoints e direcionar as requisições para os Controllers.
+Responsável por definir os endpoints e direcionar as requisições para os Controllers correspondentes:
 
-Exemplo:
-
-```text
-POST /users
-```
+- `POST /users` — Cadastro de usuário
+- `POST /sessions` — Autenticação de usuário (Login)
+- `POST /sessions/refresh` — Renovação de tokens (Refresh Token)
 
 A camada de rotas não contém regras de negócio.
 
 ### Controller
 
-Responsável por lidar com a comunicação HTTP.
-
-Atualmente o Controller:
+Responsável por lidar com a comunicação HTTP:
 
 - recebe a requisição;
-- valida os dados utilizando Zod;
-- chama o Service;
-- define o status HTTP;
-- retorna a resposta.
+- valida a estrutura dos dados com Zod;
+- delega a execução para o Service correspondente;
+- define o status HTTP apropriado;
+- retorna a resposta padronizada.
 
 ### Service
 
-Responsável pelas regras de negócio.
+Responsável pela lógica e regras de negócio da aplicação:
 
-Por exemplo, durante o cadastro:
-
-```text
-1. Verificar se o e-mail já existe
-2. Gerar o hash da senha
-3. Criar o usuário
-4. Remover informações sensíveis da resposta
-```
-
-### Prisma
-
-Responsável pela comunicação entre a aplicação e o PostgreSQL.
+- **CreateUserService**: verifica duplicidade de e-mail, gera hash da senha e persiste o usuário;
+- **LoginService**: valida credenciais, emite o Access Token (JWT), gera o Refresh Token e registra a sessão no banco;
+- **RefreshTokenService**: valida o formato e assinatura do Refresh Token, valida a expiração, executa a rotação de segredo e emite novos tokens;
+- **TokenService**: assina e configura os parâmetros do Access Token JWT;
+- **SessionService**: gerencia a criação e atualização de hashes de sessões no banco de dados.
 
 ### AppError
 
-O projeto possui uma classe própria para representar erros esperados da aplicação:
+Classe personalizada para representar erros esperados da aplicação:
 
 ```text
 AppError
@@ -167,76 +157,43 @@ AppError
    └── statusCode
 ```
 
-Isso permite diferenciar erros conhecidos de erros inesperados.
+Isso permite diferenciar falhas de negócio (como credenciais inválidas ou e-mail já em uso) de falhas inesperadas do servidor.
 
 ### Error Handler
 
-Um middleware global transforma erros da aplicação em respostas HTTP padronizadas.
-
-Exemplo:
-
-```json
-{
-  "message": "E-mail já cadastrado"
-}
-```
-
-com:
-
-```text
-HTTP 409 Conflict
-```
+Middleware global que intercepta erros da aplicação e retorna respostas HTTP estruturadas.
 
 ---
 
 ## 🔐 Segurança
 
-Mesmo sendo um projeto em desenvolvimento, algumas práticas de segurança já estão sendo aplicadas.
+### Armazenamento seguro de senhas
 
-### Senhas nunca são armazenadas em texto puro
+As senhas nunca são salvas em texto puro. Durante o cadastro e verificação, passam pelo **bcrypt** com fator de custo (*salt rounds*) 12. O hash da senha nunca é exposto nas respostas da API.
 
-Durante o cadastro, a senha passa pelo bcrypt:
+### Access Token de curta duração (JWT)
 
-```text
-Senha informada
-      │
-      ▼
- bcrypt.hash()
-      │
-      ▼
-Password Hash
-      │
-      ▼
-PostgreSQL
-```
+A autenticação utiliza tokens JWT com validade curta (**15 minutos**), reduzindo a janela de impacto em caso de interceptação. O payload do token contém o identificador do usuário (`sub: userId`) e é assinado com chave secreta mantida no servidor via variável de ambiente.
 
-A API não retorna o `passwordHash` na resposta do cadastro.
+### Refresh Token com Rotação (Refresh Token Rotation)
 
-### Validação de entrada
+Para manter sessões persistentes com alto nível de segurança, foi adotada a estratégia de **Refresh Token Rotation**:
 
-Os dados recebidos pela API são validados utilizando **Zod** antes de serem processados.
+1. O Refresh Token é emitido no formato opaco: `sessionId.secret`.
+2. O segredo (`secret`) é gerado com alta entropia (`crypto.randomBytes(64)`).
+3. No banco de dados, apenas o hash bcrypt desse segredo é armazenado (`refreshTokenHash`), garantindo que um vazamento da base não comprometa tokens ativos.
+4. Cada sessão tem prazo de validade de **15 dias**.
+5. Ao solicitar a renovação (`POST /sessions/refresh`), um **novo segredo é gerado** e atualizado no banco, invalidando imediatamente o Refresh Token anterior e prevenindo ataques de repetição (*replay attacks*).
 
-Exemplo:
+### Validação de entrada com Zod
 
-```json
-{
-  "name": "Ivan",
-  "email": "ivan@example.com",
-  "password": "123"
-}
-```
-
-Uma senha com menos de 8 caracteres é rejeitada pela API.
-
-### Variáveis de ambiente
-
-As informações de conexão com o banco são mantidas através de variáveis de ambiente, evitando colocar credenciais diretamente no código-fonte.
+Todos os dados recebidos nas requisições passam por validação estrita antes do processamento.
 
 ---
 
 ## 📡 Endpoints atuais
 
-### Criar usuário
+### 1. Criar usuário
 
 ```http
 POST /users
@@ -267,13 +224,76 @@ Resposta de sucesso:
 }
 ```
 
-### Possíveis respostas
+---
 
-#### Dados inválidos
+### 2. Autenticar usuário (Login)
 
 ```http
-400 Bad Request
+POST /sessions
 ```
+
+Request:
+
+```json
+{
+  "email": "ivan@example.com",
+  "password": "12345678"
+}
+```
+
+Resposta de sucesso:
+
+```http
+200 OK
+```
+
+```json
+{
+  "user": {
+    "id": "uuid",
+    "name": "Ivan",
+    "email": "ivan@example.com",
+    "createdAt": "2026-09-15T16:53:47.136Z"
+  },
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "70d24c01-7fa1-4da2-83b6-17b8f9e67a78.8f4b..."
+}
+```
+
+---
+
+### 3. Renovar autenticação (Refresh Token)
+
+```http
+POST /sessions/refresh
+```
+
+Request:
+
+```json
+{
+  "refreshToken": "70d24c01-7fa1-4da2-83b6-17b8f9e67a78.8f4b..."
+}
+```
+
+Resposta de sucesso:
+
+```http
+200 OK
+```
+
+```json
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "70d24c01-7fa1-4da2-83b6-17b8f9e67a78.9c2e..."
+}
+```
+
+---
+
+### Possíveis respostas de erro
+
+#### Dados inválidos (400 Bad Request)
 
 ```json
 {
@@ -282,23 +302,37 @@ Resposta de sucesso:
 }
 ```
 
-#### E-mail já cadastrado
+#### E-mail já cadastrado (409 Conflict)
 
-```http
-409 Conflict
+```json
+{
+  "message": "Email já cadastrado"
+}
+```
+
+#### Credenciais inválidas (401 Unauthorized)
+
+```json
+{
+  "message": "E-mail ou senha inválidos"
+}
+```
+
+#### Refresh Token inválido ou expirado (401 Unauthorized)
+
+```json
+{
+  "message": "Refresh token inválido"
+}
 ```
 
 ```json
 {
-  "message": "E-mail já cadastrado"
+  "message": "Refresh token expirado"
 }
 ```
 
-#### Erro inesperado
-
-```http
-500 Internal Server Error
-```
+#### Erro interno do servidor (500 Internal Server Error)
 
 ```json
 {
@@ -312,54 +346,41 @@ Resposta de sucesso:
 
 O projeto utiliza **PostgreSQL** executado através do Docker.
 
-Atualmente o modelo possui as entidades:
+O modelo de dados possui as entidades:
 
 ```text
 User
  │
- └── Session
+ └── Session (1:N)
 ```
 
 ### User
 
-Responsável pelos dados do usuário:
+Responsável pelos dados de conta do usuário:
 
-- `id`
+- `id` (UUID)
 - `name`
-- `email`
+- `email` (único)
 - `passwordHash`
 - `createdAt`
 
 ### Session
 
-Estrutura preparada para o gerenciamento de sessões de autenticação:
+Responsável pelo controle das sessões e renovações de token:
 
-- `id`
-- `userId`
-- `refreshTokenHash`
-- `expiresAt`
+- `id` (UUID)
+- `userId` (referência ao usuário com deleção em cascata)
+- `refreshTokenHash` (hash seguro do segredo do refresh token)
+- `expiresAt` (data de expiração da sessão — 15 dias)
 - `createdAt`
 
-A relação permite que um usuário possua múltiplas sessões.
-
-Isso possibilita futuramente trabalhar com cenários como:
-
-```text
-Usuário
- ├── Computador
- ├── Celular
- └── Tablet
-```
-
-Cada dispositivo poderá possuir uma sessão independente.
+A relação permite que um mesmo usuário mantenha múltiplas sessões ativas (por exemplo, em computadores e celulares distintos) de forma isolada.
 
 ---
 
 ## 🐳 Docker
 
 O PostgreSQL é executado através de um container Docker.
-
-Banco utilizado:
 
 ```text
 Database: auth_api
@@ -376,7 +397,7 @@ docker compose up -d
 Para verificar os containers:
 
 ```bash
-docker ps
+docker compose ps
 ```
 
 Para parar os containers:
@@ -409,16 +430,11 @@ pnpm install
 
 ### 4. Configurar as variáveis de ambiente
 
-Criar um arquivo:
-
-```text
-.env
-```
-
-Com:
+Criar o arquivo `.env` na raiz do projeto:
 
 ```env
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/auth_api"
+JWT_SECRET="seu_segredo_jwt_super_seguro_aqui"
 ```
 
 ### 5. Iniciar o PostgreSQL
@@ -455,85 +471,56 @@ http://localhost:3333
 
 ## 🧪 Validação
 
-O projeto utiliza TypeScript para verificar problemas durante o desenvolvimento.
-
-Para executar a verificação:
+Para executar a verificação estática de tipos com o TypeScript:
 
 ```bash
 pnpm exec tsc --noEmit
 ```
 
-Também estão planejados testes automatizados para os principais fluxos da aplicação.
-
 ---
 
 ## 📋 Roadmap
 
-O projeto ainda está em desenvolvimento.
-
 ### ✅ Concluído
 
-- [x] Configuração do Node.js
-- [x] TypeScript
-- [x] Express
-- [x] PostgreSQL
-- [x] Docker
-- [x] Prisma
-- [x] Configuração de migrations
-- [x] Arquitetura Route / Controller / Service
-- [x] Programação Orientada a Objetos
-- [x] Cadastro de usuários
-- [x] Validação com Zod
-- [x] Hash de senhas com bcrypt
+- [x] Configuração do Node.js, TypeScript e Express
+- [x] PostgreSQL com Docker Compose
+- [x] Prisma ORM e migrations
+- [x] Arquitetura em camadas (Routes / Controllers / Services)
+- [x] Cadastro de usuários com validação Zod
+- [x] Hash seguro de senhas com bcrypt
 - [x] Verificação de e-mail duplicado
-- [x] AppError
-- [x] Middleware global de erros
-- [x] Respostas HTTP padronizadas
+- [x] Tratamento centralizado de erros com AppError e Middleware global
+- [x] Autenticação / Login (`POST /sessions`)
+- [x] Emissão de Access Token (JWT) com expiração de 15 minutos
+- [x] Emissão de Refresh Token opaco (`sessionId.secret`)
+- [x] Persistência e gerenciamento de sessões no banco de dados
+- [x] Renovação de tokens com Rotação de Refresh Token (`POST /sessions/refresh`)
 
-### 🚧 Em desenvolvimento
+### 🚧 Próximos passos
 
-- [ ] Login
-- [ ] Autenticação com JWT
-- [ ] Access Token
-- [ ] Refresh Token
-- [ ] Gerenciamento de sessões
-- [ ] Logout
-- [ ] Endpoint `/me`
-- [ ] Proteção de rotas
-- [ ] Middleware de autenticação
-- [ ] Testes automatizados
-- [ ] Tratamento de casos de autenticação
-- [ ] Melhorias de segurança
-- [ ] Documentação da API
+- [ ] Middleware de autenticação (validação do header `Authorization: Bearer <token>`)
+- [ ] Proteção de rotas autenticadas
+- [ ] Endpoint `/me` (obtenção dos dados do usuário logado)
+- [ ] Logout (invalidação de sessão)
+- [ ] Revogação de todas as sessões ativas do usuário
+- [ ] Testes automatizados (unitários e de integração)
+- [ ] Rate limiting para proteção contra brute force
+- [ ] Documentação interativa da API (Swagger / OpenAPI)
 
 ---
 
 ## 📚 Práticas utilizadas
 
-Durante o desenvolvimento estão sendo aplicados conceitos e práticas como:
-
 - **POO (Programação Orientada a Objetos)**
-- separação de responsabilidades;
-- princípios de arquitetura em camadas;
-- Dependency Injection;
-- validação de dados;
-- tratamento centralizado de erros;
-- hashing de senhas;
-- HTTP status codes;
-- API REST;
-- migrations;
-- variáveis de ambiente;
-- controle de versão com Git;
-- desenvolvimento incremental;
-- preocupação com segurança desde o início do projeto.
-
----
-
-## 💡 Objetivo profissional
-
-Além de funcionar como uma API de autenticação, este projeto está sendo desenvolvido como um projeto prático para aprofundar conhecimentos em **Backend e Full Stack Development**.
-
-A proposta é construir o sistema gradualmente, adicionando funcionalidades e boas práticas encontradas em aplicações reais, em vez de implementar apenas um CRUD simples.
+- Separação de responsabilidades e camadas bem delimitadas
+- Injeção de dependências nos Services e Controllers
+- Estratégia moderna de autenticação: **Stateless Access Token (JWT)** + **Stateful Session / Refresh Token Rotation**
+- Hashing criptográfico de dados sensíveis (senhas e segredos de token)
+- Validação estrita de schemas com Zod
+- Tratamento centralizado de exceções
+- Migrations declarativas com Prisma ORM
+- Gerenciamento de segredos com variáveis de ambiente
 
 ---
 
@@ -541,4 +528,4 @@ A proposta é construir o sistema gradualmente, adicionando funcionalidades e bo
 
 **🚧 Em desenvolvimento**
 
-Novas funcionalidades serão adicionadas progressivamente conforme a evolução do projeto.
+Novas funcionalidades (como proteção de rotas e logout) serão adicionadas progressivamente conforme a evolução do projeto.
